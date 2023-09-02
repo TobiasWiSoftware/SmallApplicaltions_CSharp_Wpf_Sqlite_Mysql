@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Data.SqlTypes;
 using System.Net.Http;
+using System.Runtime.InteropServices.ComTypes;
 using System.Runtime.Intrinsics.Arm;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -12,7 +14,7 @@ using System.Threading.Tasks;
 
 // 3. Fetch the names of the clubs of every game and the goals in a List<Tuple<string, string, int, int>>
 
-// 4. Read all club names from the database and map in an array
+// 4. Export clubnames for database and scrape the game data from the website
 
 // 5. Loop through the Tuple and compare the name of the database array with the tuple names. Create a new List<Tuple<int,int,int,int>>
 // with the indexes of the clubs from the database, the matchday is the ((index of the game in the tuple + 1) / 8 with cuting + 1)
@@ -116,7 +118,68 @@ using (HttpClient c = new())
     // Set listAllTeams with the clubs only one time
 
     listAllTeams = listAllTeams.Distinct().ToList();
-    
+
+
+
+
+    // 4. Export clubnames for database
+
+    using (StreamWriter w = new("../../../SQL-Files/clubOnlineNames.sql", false))
+    {
+
+        int counter = 1;
+
+        listAllTeams.ForEach(s =>
+        {
+            string sql = string.Empty;
+            sql = $"UPDATE TClub SET ClubOnlineName = '{s}' WHERE ClubID = {counter++};";
+            w.WriteLine(sql);
+        });
+    }
+
+    // scrap gamedata from website
+
+    List<Tuple<int, int>> gameData = new();
+
+    list.ForEach(td =>
+    {
+        if ((start = td.IndexOf("title=\"Spielschema ")) != -1)
+        {
+            string substr = td.Substring(start + 19);
+            start = substr.IndexOf('>');
+            end = substr.IndexOf('(');
+            substr = substr.Substring(start + 1, end - start - 1);
+
+            string[] astr = substr.Split(':');
+
+            gameData.Add(new(Convert.ToInt32(astr[0]), Convert.ToInt32(astr[1])));
+        }
+    });
+
+    // 5. and 6. Merge club name with game data
+
+    for (int i = 0; i < listGames.Count; i++)
+    {
+        listGames[i] = new(listGames[i].Item1, gameData[i].Item1, gameData[i].Item2);
+    }
+
+    // 7. Create the insert cmd 
+
+    using (StreamWriter w = new("../../../SQL-Files/InsertGames.sql", false))
+    {
+        string sql = string.Empty;
+
+        int counter = 1;
+
+        listGames.ForEach(g =>
+        {
+            string[] clubNamesSplit = g.Item1.Split('+');
+            w.WriteLine($"INSERT INTO TGame (HomeId, GuestId, MatchDay, Season, GoalHome, GoalGuest) VALUES ((Select ClubId FROM TClub WHERE ClubOnlineName = '{clubNamesSplit[0]}'),(SELECT ClubId FROM TClub WHERE ClubOnlineName = '{clubNamesSplit[1]}'),{counter / 8 + 1},'2020/2021',{g.Item2}, {g.Item3});");
+            counter++;
+        });
+
+    }
+
 
 
     Console.WriteLine("All Teams \n");
@@ -130,5 +193,11 @@ using (HttpClient c = new())
         Console.WriteLine($"HomeClub: {s3[0].PadRight(25)} GuestClub: {s3[1].PadRight(25)} HomeGoal: {g.Item2 + "".PadLeft(3)} GuestGoal: {g.Item3 + "".PadLeft(3)}");
 
     });
+
+
+
+
+
+
 
 }

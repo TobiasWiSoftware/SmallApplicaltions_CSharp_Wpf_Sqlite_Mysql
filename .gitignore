@@ -363,3 +363,5 @@ MigrationBackup/
 FodyWeavers.xsd
 /WebCrawler/SQL-Files/clubOnlineNames.sql
 /WebCrawler/SQL-Files/InsertGames.sql
+/WebCrawler/SQL-Files/InsertTPlayers.sql
+/WebCrawler/SQL-Files/InsertTGoals.sql

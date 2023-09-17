@@ -9,9 +9,9 @@
     <Grid>
         <DataGrid AutoGenerateColumns="False" Margin="0,0,0,300">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Peronalnummer"/>
-                <DataGridTextColumn Header="Name"/>
-                <DataGridTextColumn Header="Umsatz"/>
+                <DataGridhtmltextColumn Header="Peronalnummer"/>
+                <DataGridhtmltextColumn Header="Name"/>
+                <DataGridhtmltextColumn Header="Umsatz"/>
             </DataGrid.Columns>
         </DataGrid>
         <Canvas Background="AliceBlue" Margin="0,150,0,0">

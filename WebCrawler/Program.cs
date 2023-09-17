@@ -1,10 +1,14 @@
 ﻿using System;
+using System.IO;
+using System.Collections.Generic;
 using System.Data.SqlTypes;
 using System.Net.Http;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices.ComTypes;
 using System.Runtime.Intrinsics.Arm;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using HtmlAgilityPack;
 
 // Task is to crawl the data of every match and every goal of the match. I follow these steps:
 
@@ -43,15 +47,26 @@ using System.Threading.Tasks;
 // 15. Copy the two Inserts in my SQLFootballDatabase Program and test in Database
 
 
+// Generate folder for gernerated *.sql files
+
+string relPath = "../../../SQL-Files";
+string aPath = Path.GetFullPath(relPath);
+
+Directory.CreateDirectory(aPath);
+
+string season = "2020/2021";
+
+
+
 using (HttpClient c = new())
 {
     // Step 1
     var url = "https://www.weltfussball.de/alle_spiele/bundesliga-2020-2021/";
-    string text = await c.GetStringAsync(url);
-    int start = text.IndexOf(@"<th colspan=""7""><a href=""/spielplan/bundesliga-2020-2021-spieltag/1/"">1. Spieltag</a></th>");
-    text = text.Substring(start);
-    int end = text.IndexOf("</table>");
-    text = text.Substring(0, end + 8);
+    string htmltext = await c.GetStringAsync(url);
+    int start = htmltext.IndexOf(@"<th colspan=""7""><a href=""/spielplan/bundesliga-2020-2021-spieltag/1/"">1. Spieltag</a></th>");
+    htmltext = htmltext.Substring(start);
+    int end = htmltext.IndexOf("</table>");
+    htmltext = htmltext.Substring(0, end + 8);
 
     List<string> list = new List<string>();
 
@@ -60,14 +75,14 @@ using (HttpClient c = new())
 
     // 2.1 Get the tds
 
-    while ((start = text.IndexOf("<td ")) != -1 && (end = text.IndexOf("</td>")) != -1)
+    while ((start = htmltext.IndexOf("<td ")) != -1 && (end = htmltext.IndexOf("</td>")) != -1)
     {
-        string s = text.Substring(start, end - start + 5);
+        string s = htmltext.Substring(start, end - start + 5);
         list.Add(s);
-        text = text.Substring(end + 5);
+        htmltext = htmltext.Substring(end + 5);
 
-        start = text.IndexOf("<td ");
-        end = text.IndexOf("</td>");
+        start = htmltext.IndexOf("<td ");
+        end = htmltext.IndexOf("</td>");
     }
 
     // 2.2 Get the <a>s for the teams
@@ -119,6 +134,110 @@ using (HttpClient c = new())
 
     listAllTeams = listAllTeams.Distinct().ToList();
 
+    Console.WriteLine("All Teams \n");
+    listAllTeams.ForEach(s => Console.WriteLine(s.Replace('-', ' ')));
+    Console.WriteLine("-------------------");
+    Console.WriteLine();
+
+    // Get all players
+
+    // Format Fname, Lname, clubid, gametime, season
+
+    List<Tuple<string, string, int, string, string>> lPlayers = new();
+
+    foreach (string item in listAllTeams)
+    {
+        url = $"https://www.weltfussball.de/team_einsaetze/{item}/bundesliga-2020-2021/nach-minuten/";
+
+        htmltext = await c.GetStringAsync(url);
+
+        HtmlDocument doc = new HtmlDocument();
+
+        doc.LoadHtml(htmltext);
+
+        var tab = doc.DocumentNode.SelectNodes(".//table").ToList().Find(x => x.InnerHtml.Contains("spieleinsatz.gif"));
+
+        var tds = tab.SelectNodes(".//td").ToList();
+
+        tds = tds.FindAll(t => tds.IndexOf(t) % 10 < 2);
+
+        tds.RemoveRange(0, 2);
+
+        int i = 0;
+        string clubIndex = $"{listAllTeams.IndexOf(item).ToString().PadLeft(3)} club ";
+
+        int counterPlayer = 0;
+
+
+        string[] name = default;
+
+        foreach (HtmlNode n in tds)
+        {
+
+            if (++i % 2 != 0)
+            {
+                name = n.InnerText.Split(' ');
+
+                if (name.Length > 2)
+                {
+                    string[] marker = name;
+
+                    name = new string[2];
+                    name[0] = marker[0] + " " + marker[1];
+                    name[1] = marker[2];
+                }
+                else if (name.Length == 1)
+                {
+                    name = new[] { name[0], "noname" };
+                }
+            }
+            else
+            {
+                int minutes = Convert.ToInt32(n.InnerText.Replace("'", "").Replace('-', '0'));
+
+
+                lPlayers.Add(new(name[0], name[1], Convert.ToInt32(minutes), item, season));
+                Console.WriteLine(clubIndex + name[0].PadRight(20) + name[1].PadRight(20) + minutes.ToString().PadLeft(4) + season.PadLeft(11));
+                clubIndex = $"{listAllTeams.IndexOf(item).ToString().PadLeft(3)} club ";
+                counterPlayer++;
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"Count player: {counterPlayer}");
+        Console.WriteLine();
+
+    }
+
+    string clubNow = string.Empty;
+    string clubMarker = string.Empty;
+
+    using (StreamWriter w = new("../../../SQL-Files/InsertTPlayers.sql"))
+    {
+        foreach (Tuple<string, string, int, string, string> playerSet in lPlayers)
+        {
+            string sql = string.Empty;
+            clubNow = playerSet.Item4;
+
+            if (clubNow != clubMarker)
+            {
+                clubMarker = clubNow;
+
+                w.WriteLine("");
+                w.WriteLine($"-- {playerSet.Item4}");
+                w.WriteLine();
+                w.WriteLine();
+
+            }
+
+            sql += $"INSERT INTO TPlayer (FirstName, LastName, ClubId) SELECT '{playerSet.Item1}', '{playerSet.Item2}',  (SELECT ClubId FROM TClub WHERE ClubOnlineName = '{playerSet.Item4}') " +
+                   $"WHERE NOT EXISTS (SELECT 1 FROM TPlayer WHERE LOWER(FirstName) = '{playerSet.Item1}' AND LOWER(LastName) = '{playerSet.Item2}');";
+
+
+
+            w.WriteLine(sql);
+        }
+    }
 
 
 
@@ -163,6 +282,17 @@ using (HttpClient c = new())
         listGames[i] = new(listGames[i].Item1, gameData[i].Item1, gameData[i].Item2);
     }
 
+    Console.WriteLine();
+    Console.WriteLine("All Games \n");
+    listGames.ForEach(g =>
+    {
+        string[] s3 = g.Item1.Replace('-', ' ').Split('+');
+        Console.WriteLine($"HomeClub: {s3[0].PadRight(25)} GuestClub: {s3[1].PadRight(25)} HomeGoal: {g.Item2 + "".PadLeft(3)} GuestGoal: {g.Item3 + "".PadLeft(3)}");
+
+    });
+
+    Console.WriteLine("-------------------");
+
     // 7. Create the insert cmd 
 
     using (StreamWriter w = new("../../../SQL-Files/InsertGames.sql", false))
@@ -174,25 +304,154 @@ using (HttpClient c = new())
         listGames.ForEach(g =>
         {
             string[] clubNamesSplit = g.Item1.Split('+');
-            w.WriteLine($"INSERT INTO TGame (HomeId, GuestId, MatchDay, Season, GoalHome, GoalGuest) VALUES ((Select ClubId FROM TClub WHERE ClubOnlineName = '{clubNamesSplit[0]}'),(SELECT ClubId FROM TClub WHERE ClubOnlineName = '{clubNamesSplit[1]}'),{counter / 8 + 1},'2020/2021',{g.Item2}, {g.Item3});");
+            w.WriteLine($"INSERT INTO TGame (HomeId, GuestId, MatchDay, Season) VALUES ((Select ClubId FROM TClub WHERE ClubOnlineName = '{clubNamesSplit[0]}'),(SELECT ClubId FROM TClub WHERE ClubOnlineName = '{clubNamesSplit[1]}'),{counter / 8 + 1},'2020/2021');");
             counter++;
         });
 
     }
 
+    // 8. Access url for goal data
 
-
-    Console.WriteLine("All Teams \n");
-    listAllTeams.ForEach(s => Console.WriteLine(s.Replace('-', ' ')));
+    string gamedate = string.Empty;
 
     Console.WriteLine();
-    Console.WriteLine("All Games \n");
-    listGames.ForEach(g =>
-    {
-        string[] s3 = g.Item1.Replace('-', ' ').Split('+');
-        Console.WriteLine($"HomeClub: {s3[0].PadRight(25)} GuestClub: {s3[1].PadRight(25)} HomeGoal: {g.Item2 + "".PadLeft(3)} GuestGoal: {g.Item3 + "".PadLeft(3)}");
+    Console.WriteLine("All Goals: ");
+    Console.WriteLine();
 
-    });
+    int gameCount = 0;
+    int gamedayMarker = 0;
+    int gameDay = 0;
+    int goalCounter = 0;
+    int goalDayCounter = 0;
+
+    using (StreamWriter w = new("../../../SQL-Files/InsertTGoals.sql"))
+    {
+
+        foreach (Tuple<string, int, int> game in listGames)
+        {
+            string[] clubs = game.Item1.Split('+');
+
+            url = $"https://www.weltfussball.de/spielbericht/bundesliga-2020-2021-{clubs[0]}-{clubs[1]}/";
+
+            htmltext = await c.GetStringAsync(url);
+
+            HtmlDocument doc = new();
+            doc.LoadHtml(htmltext);
+
+            var tables = doc.DocumentNode.SelectNodes("//table");
+
+            var table = tables.ToList().Find(t => t.InnerText.Contains("Tore"));
+
+            var trs = table.SelectNodes(".//tr");
+
+
+            gameDay = gameCount / 9 + 1;
+
+            gameCount++;
+
+            if (gamedayMarker != gameDay)
+            {
+                Console.WriteLine();
+
+                if (goalDayCounter != 0)
+                    Console.WriteLine($"Goals od the gameday: {goalDayCounter}");
+
+                goalDayCounter = 0;
+
+                Console.WriteLine("-----");
+
+                Console.WriteLine($"{gameDay}. Gameday");
+
+                Console.WriteLine();
+
+                gamedayMarker = gameDay;
+            }
+
+
+            trs.ToList().ForEach(t =>
+            {
+                if (t.InnerText.Contains(':'))
+                {
+                    goalCounter++;
+                    goalDayCounter++;
+                    var tds = t.ChildNodes;
+                    var aas = t.SelectNodes(".//a");
+
+                    string input = tds[3].InnerText.Split("&nbsp")[0];
+
+                    // Zerlegen Sie den String bei ' / '
+                    string[] parts = input.Contains('/') ? input.Split(" / ") : input.Split('(');
+
+                 
+
+                    // Zerlegen Sie den ersten Teil bei Leerzeichen
+                    string[] nameAndTime = parts[0].Split(' ');
+
+                    string name = string.Join(" ", nameAndTime, 0, nameAndTime.Length - 1).Replace("\n", "");
+                    string time = nameAndTime.ToList().Find(s => s.Contains('.') && char.IsDigit(s[s.Length - 2])).TrimEnd('.');
+                    string shotType = parts.Length > 1 ? parts[1] : "";
+
+                    // Remove if numbers is in string
+
+                    if (name.Any(x => char.IsDigit(x)))
+                    {
+
+                        for (int i = 0; i < name.Length; i++)
+                        {
+                            if (!char.IsLetter(name[i]) && name[i] != ' ')
+                            {
+                                name = name.Remove(i);
+                            }
+                        }
+                    }
+
+                    if (shotType.Contains("dir. Freisto&szlig;"))
+                    {
+                        shotType = "Freistoss";
+                    }
+                    else if(shotType.ToLower().Contains("elfmeter"))
+                    {
+                        shotType = "Elfmeter";
+                    }
+                    else if(shotType.Contains("Eigentor"))
+                    {
+                        shotType = "Eigentor";
+                    }
+
+
+
+                    Tuple<int, string, int, string> tu = new(gameDay, name, Convert.ToInt32(time), shotType);
+
+                    string sql = $"INSERT INTO TGOAL (PlayerId, MatchDay, GameMinute, GameId, Penalty, FreeKick, OwnGoal) VALUES " +
+                $"((SELECT PlayerId FROM TPlayer where CONCAT(FirstName, ' ', Lastname) = '{tu.Item2}'  OR FirstName = '{tu.Item2}' AND LastName = 'noname'), {tu.Item1}, {tu.Item3}, {gameCount}, {tu.Item4.ToLower() == "elfmeter"}, {tu.Item4.ToLower() == "freistoss"}, {tu.Item4.ToLower() == "eigentor"});";
+
+                    w.WriteLine(sql);
+
+
+                    Console.WriteLine(tu.Item2.ToString().PadLeft(25) + " " + tu.Item3.ToString().PadLeft(3) + " " + tu.Item4 + "".PadLeft(25));
+                }
+
+            });
+
+        }
+
+    }
+
+
+    Console.WriteLine();
+    Console.WriteLine("-----");
+    Console.WriteLine($"Goals Total: {goalCounter}");
+
+
+
+
+
+
+
+
+
+
+
 
 
 

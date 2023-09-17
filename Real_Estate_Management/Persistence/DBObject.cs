@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Data.Common;
 using System.Linq;
 using System.Reflection.Metadata;
-using System.Text;
+using System.htmltext;
 using System.Threading.Tasks;
 using Layer4;
 using MySql.Data.MySqlClient;
@@ -63,7 +63,7 @@ public static class DBObject
               "FlatId INT," +
               "BookingDate DATE NOT NULL," +
               "Amount DECIMAL(8,2) NOT NULL," +
-              "BookingText VARCHAR(50) DEFAULT NULL," +
+              "Bookinghtmltext VARCHAR(50) DEFAULT NULL," +
               "PRIMARY KEY(BookingId)" +
               ");";
 

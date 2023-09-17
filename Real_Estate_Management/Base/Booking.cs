@@ -2,7 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
+using System.htmltext;
 using System.Threading.Tasks;
 
 namespace Real_Estate_Management
@@ -11,7 +11,7 @@ namespace Real_Estate_Management
     public class Booking
     {
         public int Id { get; set; }
-        public string? Text { get; set; }
+        public string? htmltext { get; set; }
         public decimal Amount { get; set; }
         public DateTime Date { get; set; }
         public CoastCenter CoastCenter { get; set; }
